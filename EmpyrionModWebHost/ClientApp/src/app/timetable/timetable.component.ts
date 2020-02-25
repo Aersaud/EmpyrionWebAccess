@@ -42,15 +42,18 @@ export enum ActionType {
   backupScenario          = "Backup (scenario)|",
   backupMods              = "Backup (mods)|",
   backupEGSMainFiles      = "Backup (EGSMainFiles)|",
+  backupPlayfields        = "Backup (playfields)| [playfield[;playfield]] -> Example: Akua; Omicron; Masperon",
   deleteOldBackups        = "Delete old backups | [days] (default:14)",
   deleteOldBackpacks      = "Delete old backpacks | [days] (default:14)",
   deletePlayerOnPlayfield = "Delete player on playfield| [playfield[;playfield]] -> Example: Akua; Omicron; Masperon",
   deleteHistoryBook       = "Delete HistoryBook | [days] (default:14)",
+  deleteOldFactoryItems   = "Delete old factory items | [days] (default:14)",
   runShell                = "Run shell| [cmd] -> Working directory ist the current savegame folder",
   consoleCommand          = "InGame console command | [cmd] -> Help description of commands in the console with 'help'",
   wipePlayfield           = "Wipe playfields | [poi deposit terrain player]:[playfield[;playfield]] -> Example: poi deposit : Akua; Hsaa",
   resetPlayfield          = "Reset playfields | [playfield[;playfield]] -> Example: Akua; Hsaa",
   recreatePlayfield       = "Recreate playfields | delete Data,Cache,Template -> [playfield[;playfield]] -> Example: Akua; Hsaa",
+  resetPlayfieldIfEmpty   = "Reset playfields if empty | [playfield[;playfield]] -> Example: Akua; Hsaa",
 }
 
 class SubTimetableAction{
@@ -112,7 +115,7 @@ export class TimetableComponent implements OnInit {
         error => this.error = error // error path
       );
     // Stop listening for location after 10 seconds
-    setTimeout(() => { locationsSubscription.unsubscribe(); }, 10000);
+    setTimeout(() => { locationsSubscription.unsubscribe(); }, 120000);
   }
 
   ActionHelp(aAction) {

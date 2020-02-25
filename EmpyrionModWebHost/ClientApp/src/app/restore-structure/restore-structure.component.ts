@@ -6,6 +6,9 @@ import { FactionService } from '../services/faction.service';
 import { PositionService } from '../services/position.service';
 import { PlayfieldService } from '../services/playfield.service';
 import { PlayfieldModel } from '../model/playfield-model';
+import { StructureService } from '../services/structure.service';
+import { GlobalStructureInfo } from '../model/structure-model';
+import { SelectionModel } from '@angular/cdk/collections';
 
 interface PlayfieldGlobalStructureInfo {
   structureName: string;
@@ -36,7 +39,7 @@ interface PlayfieldGlobalStructureInfo {
   styleUrls: ['./restore-structure.component.less']
 })
 export class RestoreStructureComponent implements OnInit {
-  displayedColumns = ['id', 'name', 'playfield', 'type', 'core', 'posX', 'posY', 'posZ', 'faction', 'blocks', 'devices', 'touched_time', 'touched_name', 'add_info', 'structureName'];
+  displayedColumns = ['Select', 'id', 'name', 'playfield', 'type', 'core', 'posX', 'posY', 'posZ', 'faction', 'blocks', 'devices', 'touched_time', 'touched_name', 'add_info', 'structureName'];
   Backups: string[];
   error: any;
   mSelectedBackup: string;
@@ -45,6 +48,8 @@ export class RestoreStructureComponent implements OnInit {
   Playfields: PlayfieldModel[] = [];
 
   structures: MatTableDataSource<PlayfieldGlobalStructureInfo> = new MatTableDataSource([]);
+  selection = new SelectionModel<PlayfieldGlobalStructureInfo>(true, []);
+
   displayFilter: boolean = true;
 
   @ViewChild(MatSort) sort: MatSort;
@@ -53,6 +58,7 @@ export class RestoreStructureComponent implements OnInit {
   constructor(
     private http: HttpClient,
     public FactionService: FactionService,
+    private mStructureService: StructureService,
     public mPositionService: PositionService,
     private mPlayfields: PlayfieldService,
   ) { }
@@ -70,7 +76,7 @@ export class RestoreStructureComponent implements OnInit {
         error => this.error = error // error path
       );
     // Stop listening for location after 10 seconds
-    setTimeout(() => { locationsSubscription.unsubscribe(); }, 10000);
+    setTimeout(() => { locationsSubscription.unsubscribe(); }, 120000);
   }
 
   ngAfterViewInit() {
@@ -79,6 +85,14 @@ export class RestoreStructureComponent implements OnInit {
     this.sort.sortChange.subscribe(E => {
       console.log(E);
     });
+
+    this.structures.filterPredicate =
+      (data: PlayfieldGlobalStructureInfo, filter: string) =>
+         data.id                                 .toString()   .indexOf(filter) != -1  ||
+        (data.name       && data.name     .trim().toLowerCase().indexOf(filter) != -1) ||
+        (data.playfield  && data.playfield.trim().toLowerCase().indexOf(filter) != -1) ||
+        (data.type       && data.type     .trim().toLowerCase().indexOf(filter) != -1) ||
+        (data.add_info   && data.add_info .trim().toLowerCase().indexOf(filter) != -1);
   }
 
   applyFilter(filterValue: string) {
@@ -92,6 +106,27 @@ export class RestoreStructureComponent implements OnInit {
     if (this.displayFilter) setTimeout(() => FilterInput.focus(), 0);
   }
 
+  /** Whether the number of selected elements matches the total number of rows. */
+  isAllSelected() {
+    const numSelected = this.selection.selected.length;
+    if (this.structures.filteredData.length != numSelected) return false;
+
+    const numRows = this.structures.filteredData.filter(s => this.selection.isSelected(s)).length;
+    return numSelected == numRows;
+  }
+
+  /** Selects all rows if they are not all selected; otherwise clear selection. */
+  masterToggle() {
+    this.isAllSelected() ?
+      this.selection.clear() :
+      this.structures.filteredData.forEach(row => this.selection.select(row));
+  }
+
+  select(row: PlayfieldGlobalStructureInfo) {
+    this.selection.clear();
+    this.selection.toggle(row);
+  }
+
   get CurrentStructure(): PlayfieldGlobalStructureInfo {
     return this.mCurrentStructure;
   }
@@ -101,6 +136,7 @@ export class RestoreStructureComponent implements OnInit {
     this.WarpData.playfield = aStructure.playfield;
     this.WarpData.pos = JSON.parse(JSON.stringify(aStructure.pos));
     this.WarpData.rot = JSON.parse(JSON.stringify(aStructure.rot));
+    this.mStructureService.CurrentStructure = <GlobalStructureInfo><any>aStructure;
   }
 
   copyPosition() {
@@ -131,25 +167,41 @@ export class RestoreStructureComponent implements OnInit {
         error => this.error = error // error path
       );
     // Stop listening for location after 10 seconds
-    setTimeout(() => { locationsSubscription.unsubscribe(); }, 10000);
+    setTimeout(() => { locationsSubscription.unsubscribe(); }, 120000);
   }
 
   Create() {
-    if (this.CurrentStructure.structureName) this.CreateFromBackup();
-    else                                     this.CreateFromEBP();
+    if(!this.IsSingleShip)                        this.selection.selected.forEach(S => this.CreateFromBackup(S));
+    else if (this.CurrentStructure.structureName) this.CreateFromBackup(this.CurrentStructure);
+    else                                          this.CreateFromEBP();
   }
 
-  CreateFromBackup() {
-    var send = JSON.parse(JSON.stringify(this.CurrentStructure));
+  get IsSingleShip(): boolean {
+    return !this.selection.selected || this.selection.selected.length == 0;
+  }
+
+  CreateFromBackup(structure: PlayfieldGlobalStructureInfo) {
+    var send = JSON.parse(JSON.stringify(structure));
     send.playfield = this.WarpData.playfield;
-    send.pos = this.WarpData.pos;
+    if (this.IsSingleShip) send.pos = this.WarpData.pos;
+    else if (this.CurrentStructure) {
+      send.pos.x += this.WarpData.pos.x - this.CurrentStructure.pos.x;
+      send.pos.y += this.WarpData.pos.y - this.CurrentStructure.pos.y;
+      send.pos.z += this.WarpData.pos.z - this.CurrentStructure.pos.z;
+    }
+    else {
+      send.pos.x += this.WarpData.pos.x;
+      send.pos.y += this.WarpData.pos.y;
+      send.pos.z += this.WarpData.pos.z;
+    }
+
     let locationsSubscription = this.http.post("Backups/CreateStructure", { backup: this.SelectedBackup, structure: send })
       .pipe()
       .subscribe(
         error => this.error = error // error path
       );
     // Stop listening for location after 10 seconds
-    setTimeout(() => { locationsSubscription.unsubscribe(); }, 10000);
+    setTimeout(() => { locationsSubscription.unsubscribe(); }, 120000);
   }
 
   CreateFromEBP() {
@@ -162,7 +214,7 @@ export class RestoreStructureComponent implements OnInit {
         error => this.error = error // error path
       );
     // Stop listening for location after 10 seconds
-    setTimeout(() => { locationsSubscription.unsubscribe(); }, 10000);
+    setTimeout(() => { locationsSubscription.unsubscribe(); }, this.IsSingleShip ? 120000 : 120000 * this.selection.selected.length);
   }
 
   onUploaded(aName: string) {

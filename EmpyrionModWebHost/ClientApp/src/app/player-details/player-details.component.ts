@@ -9,6 +9,8 @@ import { YesNoDialogComponent, YesNoData } from '../yes-no-dialog/yes-no-dialog.
 import { PlayfieldModel } from '../model/playfield-model';
 import { RoleService } from '../services/role.service';
 import { UserRole } from '../model/user';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { FormControl } from '@angular/forms';
 
 @Component({
   selector: 'app-player-details',
@@ -17,6 +19,7 @@ import { UserRole } from '../model/user';
 })
 export class PlayerDetailsComponent implements OnInit {
   @ViewChild(YesNoDialogComponent) YesNo: YesNoDialogComponent;
+  SelectedFaction = new FormControl();
   Player: PlayerModel = {};
   Playfields: PlayfieldModel[] = [];
   Factions: FactionModel[] = [];
@@ -25,6 +28,9 @@ export class PlayerDetailsComponent implements OnInit {
   @ViewChild(MatMenuTrigger) contextMenuTrigger: MatMenuTrigger;
   Roles = [{ id: 0, text: 'Owner' }, { id: 1, text: 'Admin' }, { id: 2, text: 'Member' }];
   UserRole = UserRole;
+
+  private filteredFactions: BehaviorSubject<FactionModel[]> = new BehaviorSubject(this.Factions);
+  public readonly filteredFactionsObservable: Observable<FactionModel[]> = this.filteredFactions.asObservable();
 
   constructor(
     private mPlayfields: PlayfieldService,
@@ -39,14 +45,30 @@ export class PlayerDetailsComponent implements OnInit {
 
     this.Player = JSON.parse(JSON.stringify(aPlayer));
     this.Player.Food = Math.floor(this.Player.Food);
+
+    let found = this.Factions.filter(option => option.FactionId == this.Player.FactionId);
+    if (found.length == 1) this.SelectedFaction.setValue(found[0].Abbrev);
   }
 
   ngOnInit() {
     this.SyncPlayer(this.mPlayerService.CurrentPlayer);
     this.mPlayfields.PlayfieldNames.subscribe(PL => this.Playfields = PL);
     this.mPlayerService.GetCurrentPlayer().subscribe(P => this.SyncPlayer(P));
-    this.mFactionService.GetFactions().subscribe(F => this.Factions = F);
-  }
+    this.mFactionService.GetFactions().subscribe(F => {
+      this.Factions = F;
+      let found = this.Factions.filter(option => option.FactionId == this.Player.FactionId);
+      if (found.length == 1) this.SelectedFaction.setValue(found[0].Abbrev);
+    });
+
+    this.SelectedFaction.valueChanges.subscribe(F => {
+      let found = this.Factions.filter(option => option.Abbrev.toLowerCase().startsWith(F.toLowerCase()));
+      if (found.length == 1) {
+        this.Changed = this.Player.FactionId != found[0].FactionId;
+        this.Player.FactionId = found[0].FactionId;
+      }
+      this.filteredFactions.next(found);
+    });
+}
 
   SaveChanges() {
     this.contextMenuTrigger.closeMenu();
@@ -92,8 +114,18 @@ export class PlayerDetailsComponent implements OnInit {
       });
   }
 
+  SetRole(aPlayer: PlayerModel, aRole: string) {
+    this.contextMenuTrigger.closeMenu();
+    this.YesNo.openDialog({ title: "Set role for player to " + aRole, question: aPlayer.PlayerName }).afterClosed().subscribe(
+      (YesNoData: YesNoData) => {
+        if (!YesNoData.result) return;
+        this.mPlayerService.SetRoleOfPlayer(this.Player, aRole);
+      });
+  }
+
+
   PlayerHint(aPlayer: PlayerModel) {
-    let FoundElevated = this.mPlayerService.ElevatedUser.find(U => U.steamId == aPlayer.SteamId);
+    let FoundElevated = this.mPlayerService.ElevatedUser ? this.mPlayerService.ElevatedUser.find(U => U.steamId == aPlayer.SteamId) : null;
     if (FoundElevated) switch (FoundElevated.permission) {
       case 3: return "GameMaster";
       case 6: return "Moderator";

@@ -1,8 +1,8 @@
 <mat-expansion-panel class="activePlayfield"
-                     *ngFor="let playfield of playfields"
-                     [expanded]="!IsClosed(playfield.name)"
-                     (opened)="Open(playfield.name)"
-                     (closed)="Close(playfield.name)">
+                      *ngFor="let playfield of playfields"
+                      [expanded]="!IsClosed(playfield.name)"
+                      (opened)="Open(playfield.name)"
+                      (closed)="Close(playfield.name)">
   <mat-expansion-panel-header style="margin-top:0px; padding-left:5px; padding-right:10px; background-color:ghostwhite;" [collapsedHeight]="'30px'" [expandedHeight]="'30px'">
     <mat-panel-title style="font-size:small">
       <mat-icon *ngIf="role.is(UserRole.VIP)" style="font-size:medium; cursor: pointer; color:mediumpurple" (click)="GotoPlayfield($event, playfield)" title="To Playfieldmap of {{playfield.name}}">map</mat-icon>
@@ -17,7 +17,7 @@
     <div style="position: absolute; left:3.8em" class="playerCell" (click)="mPlayerService.CurrentPlayer = player">{{player.PlayerName}}</div>
     <div style="position: absolute; right:0px">
       <mat-icon style="font-size:medium; cursor: pointer; color: darkmagenta;" (click)="SavePosition(player)" title="Save position of {{player.PlayerName}}">flag</mat-icon>
-      <mat-icon style="font-size:medium; cursor: pointer; color: lightblue;" (click)="ChatTo(player)" title="Chat to {{player.PlayerName}}">chat</mat-icon>
+      <mat-icon style="font-size:medium; cursor: pointer; color: lightblue;" (click)="ChatToPlayer(player)" title="Chat to {{player.PlayerName}}">chat</mat-icon>
     </div>
     <br />
   </div>

@@ -1,5 +1,5 @@
 import { Component, OnInit, ViewChild, Input, Output, EventEmitter } from '@angular/core';
-import { MatTableDataSource, MatSort, MatPaginator } from '@angular/material';
+import { MatTableDataSource, MatSort, MatPaginator, MatInput } from '@angular/material';
 import { HttpClient } from '@angular/common/http';
 import { StructureService } from '../services/structure.service';
 import { GlobalStructureInfo } from '../model/structure-model';
@@ -11,6 +11,7 @@ import { PlayerService } from '../services/player.service';
 import { FactionSelectDialogComponent } from '../faction-select-dialog/faction-select-dialog.component';
 import { UserRole } from '../model/user';
 import { RoleService } from '../services/role.service';
+import { FactionModel } from '../model/faction-model';
 
 @Component({
   selector: 'app-structures-list',
@@ -29,20 +30,25 @@ export class StructuresListComponent implements OnInit {
 
   @ViewChild(MatSort) sort: MatSort;
   @ViewChild(MatPaginator) paginator: MatPaginator;
+  @ViewChild(MatInput) FilterInput: MatInput;
 
   error: any;
   mAllStructures: GlobalStructureInfo[];
   mSelectedPlayfield: string;
   UserRole = UserRole;
+  mFactions: FactionModel[] = [];
 
   constructor(
     private http: HttpClient,
     public PlayerService: PlayerService,
     private mStructureService: StructureService,
     private mPositionService: PositionService,
-    public FactionService: FactionService,
+    public mFactionService: FactionService,
     public role: RoleService,
-  ) { }
+  ) {
+
+    this.mFactionService.GetFactions().subscribe(F => this.mFactions = F);
+  }
 
   ngOnInit() {
     if (!this.mAllStructures) this.mStructureService.GetGlobalStructureList()
@@ -50,6 +56,12 @@ export class StructuresListComponent implements OnInit {
         setTimeout(() => {
           this.mAllStructures = S;
           this.SelectedPlayfield = this.mSelectedPlayfield;
+
+          if (this.mStructureService.FilterPreset) {
+            this.FilterInput.value = this.mStructureService.FilterPreset;
+            this.applyFilter(this.mStructureService.FilterPreset);
+            this.mStructureService.FilterPreset = null;
+          }
         }, 10);
       });
   }
@@ -57,6 +69,12 @@ export class StructuresListComponent implements OnInit {
   @Input()
   set Structures(aStructures: GlobalStructureInfo[]) {
     this.mAllStructures = this.structures.data = aStructures;
+
+    if (this.mStructureService.FilterPreset) {
+      this.FilterInput.value = this.mStructureService.FilterPreset;
+      this.applyFilter(this.mStructureService.FilterPreset);
+      this.mStructureService.FilterPreset = null;
+    }
   }
 
   @Input() 
@@ -70,12 +88,25 @@ export class StructuresListComponent implements OnInit {
     this.structures.sort = this.sort;
     this.structures.paginator = this.paginator;
     this.structures.sortingDataAccessor = (D, H) => typeof (D[H]) === "string" ? ("" + D[H]).toLowerCase() : D[H];
+
+    this.structures.filterPredicate =
+      (data: GlobalStructureInfo, filter: string) =>
+        data.id       .toString().indexOf(filter) != -1 ||
+        data.name     .trim().toLowerCase().indexOf(filter) != -1 ||
+        data.playfield.trim().toLowerCase().indexOf(filter) != -1 ||
+        data.coreType .toString().indexOf(filter) != -1 ||
+        this.Faction(data) && this.Faction(data).Abbrev.trim().toLowerCase().indexOf(filter) != -1 ||
+        ('' + data.factionId).indexOf(filter) != -1;
   }
 
   applyFilter(filterValue: string) {
     filterValue = filterValue.trim(); // Remove whitespace
     filterValue = filterValue.toLowerCase(); // Datasource defaults to lowercase matches
     this.structures.filter = filterValue;
+  }
+
+  Faction(model: GlobalStructureInfo) {
+    return model ? this.mFactions.find(F => F.FactionId == model.factionId) : new FactionModel();
   }
 
   /** Whether the number of selected elements matches the total number of rows. */

@@ -15,7 +15,8 @@ export class StructureService {
   public hubConnection: HubConnection;
 
   mPlayers: PlayerModel[] = [];
-  private mStructures: GlobalStructureInfo[] = []; 
+  private mStructures: GlobalStructureInfo[] = [];
+  public FilterPreset: string;
 
   private Structures: BehaviorSubject<GlobalStructureInfo[]> = new BehaviorSubject(this.mStructures);
   public readonly StructuresObservable: Observable<GlobalStructureInfo[]> = this.Structures.asObservable();
@@ -52,11 +53,11 @@ export class StructureService {
     return this.currentStructureObservable;
   }
 
-  get CurrentStructure() {
+  public get CurrentStructure() {
     return this.mCurrentStructure;
   }
 
-  set CurrentStructure(aStructure: GlobalStructureInfo) {
+  public set CurrentStructure(aStructure: GlobalStructureInfo) {
     this.currentStructure.next(this.mCurrentStructure = aStructure);
   }
 

@@ -74,11 +74,12 @@
       </mat-panel-title>
     </mat-expansion-panel-header>
     <ng-template matExpansionPanelContent>
-      <mat-select placeholder="Faction" (selectionChange)="Changed=true" [(value)]="Player.FactionId" style="float:left; margin-left:1em; width:40%">
-        <mat-option *ngFor="let f of Factions" [value]="f.FactionId">
+      <input type="text" placeholder="Faction" [formControl]="SelectedFaction" aria-label="Number" matInput [matAutocomplete]="auto" style="float:left; margin-left:1em; width:40%">
+      <mat-autocomplete autoActiveFirstOption #auto="matAutocomplete">
+        <mat-option *ngFor="let f of filteredFactionsObservable | async" [value]="f.Abbrev">
           ({{f.Abbrev}}) {{f.Name}}
         </mat-option>
-      </mat-select>
+      </mat-autocomplete>
       <mat-select placeholder="Role" (selectionChange)="Changed=true" [(value)]="Player.FactionRole" style="float:left; margin-left:1em; width:40%">
         <mat-option *ngFor="let r of Roles" [value]="r.id">
           {{r.text}}
@@ -98,5 +99,9 @@
   <button mat-menu-item *ngIf="role.is(UserRole.InGameAdmin)" (click)="Ban(Player, '12m')">Ban 12m</button>
   <button mat-menu-item *ngIf="role.is(UserRole.GameMaster)"  (click)="UnBan(Player)">Unban</button>
   <button mat-menu-item *ngIf="role.is(UserRole.Moderator)"   (click)="Wipe(Player)">Wipe</button>
+  <button mat-menu-item *ngIf="role.is(UserRole.InGameAdmin)" (click)="SetRole(Player, 'player')">Role: Player</button>
+  <button mat-menu-item *ngIf="role.is(UserRole.InGameAdmin)" (click)="SetRole(Player, 'gamemaster')">Role: Gamemaster</button>
+  <button mat-menu-item *ngIf="role.is(UserRole.InGameAdmin)" (click)="SetRole(Player, 'moderator')">Role: Moderator</button>
+  <button mat-menu-item *ngIf="role.is(UserRole.InGameAdmin)" (click)="SetRole(Player, 'admin')">Role: InGameAdmin</button>
 </mat-menu>
 <app-yes-no-dialog></app-yes-no-dialog>

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Collections.Concurrent;
 using Eleon.Modding;
 using EmpyrionModWebHost.Extensions;
 using EmpyrionModWebHost.Models;
@@ -11,6 +12,8 @@ using EmpyrionNetAPIAccess;
 using EmpyrionNetAPITools;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Threading;
+using Microsoft.Extensions.Logging;
 
 namespace EmpyrionModWebHost.Controllers
 {
@@ -18,9 +21,15 @@ namespace EmpyrionModWebHost.Controllers
     {
         public const string CurrentSaveGame = "### Current Savegame ###";
 
+        public ILogger<BackupManager> Logger { get; set; }
         public ModGameAPI GameAPI { get; private set; }
+        public Lazy<StructureManager> StructureManager { get; }
         public Lazy<SysteminfoManager> SysteminfoManager { get; }
         public string BackupDir { get; internal set; }
+        public Queue<PlayfieldStructureData> SavesStructuresDat { get; set; }
+        public ConcurrentDictionary<string, string> ActivePlayfields { get; set; } = new ConcurrentDictionary<string, string>();
+        public ConcurrentDictionary<string, bool> LoggedError { get; set; } = new ConcurrentDictionary<string, bool>();
+
         public string CurrentBackupDirectory(string aAddOn) {
             var Result = Path.Combine(BackupDir, $"{DateTime.Now.ToString("yyyyMMdd HHmm")} Backup{aAddOn}");
             Directory.CreateDirectory(Result);
@@ -28,17 +37,100 @@ namespace EmpyrionModWebHost.Controllers
             return Result;
         }
 
-        public BackupManager()
+        public BackupManager(ILogger<BackupManager> logger)
         {
+            Logger = logger;
+
+            StructureManager  = new Lazy<StructureManager> (() => Program.GetManager<StructureManager>());
             SysteminfoManager = new Lazy<SysteminfoManager>(() => Program.GetManager<SysteminfoManager>());
 
             BackupDir = Path.Combine(EmpyrionConfiguration.ProgramPath, "Saves", Program.AppSettings.BackupDirectory ?? "Backup");
+        }
+
+        private void BackupStructureData()
+        {
+            if(ActivePlayfields.Count == 0)
+            {
+                List<string> playfields = null; 
+                try
+                {
+                    playfields = Request_Playfield_List().Result?.playfields;
+                }
+                catch (Exception error)
+                {
+                    if (LoggedError.TryAdd(error.Message, true)) Logger?.LogError(error, $"BackupStructureData: Request_Playfield_List");
+                    return;
+                }
+
+                if (playfields == null)
+                {
+                    var msg = $"Request_Playfield_List: no playfields";
+                    if (LoggedError.TryAdd(msg, true)) Logger?.LogError(msg, $"BackupStructureData: Request_Playfield_List");
+
+                    return;
+                }
+
+                ActivePlayfields = new ConcurrentDictionary<string, string>(playfields.ToDictionary(P => P));
+            }
+
+            if (SavesStructuresDat == null || SavesStructuresDat.Count == 0)
+            {
+                SavesStructuresDat = new Queue<PlayfieldStructureData>(StructureManager.Value.CurrentGlobalStructures
+                            .Values
+                            .Where(S => S.StructureInfo.factionId > 0 && ActivePlayfields.TryGetValue(S.Playfield, out _)));
+            }
+
+            int errorCounter = 0;
+
+            while (SavesStructuresDat.TryDequeue(out var test))
+            {
+                try
+                {
+                    var type = new[] { "Undef", "", "BA", "CV", "SV", "HV", "", "AstVoxel" }[test.StructureInfo.type]; // Entity.GetFromEntityType 'Kommentare der Devs: Set this Undef = 0, BA = 2, CV = 3, SV = 4, HV = 5, AstVoxel = 7
+                    var structurePath = Path.Combine(EmpyrionConfiguration.SaveGamePath, "Shared", $"{test.StructureInfo.id}");
+                    var exportDat = Path.Combine(structurePath, "Export.dat");
+
+                    if (ActivePlayfields.TryGetValue(test.Playfield, out _) && IsExportDatOutdated(exportDat))
+                    {
+                        Request_Entity_Export(new EntityExportInfo()
+                        {
+                            id = test.StructureInfo.id,
+                            playfield = test.Playfield,
+                            filePath = exportDat,
+                            isForceUnload = false,
+                        }).Wait(10000);
+
+                        Thread.Sleep(Program.AppSettings.StructureDataUpdateDelayInSeconds * 1000);
+                        return;
+                    }
+                }
+                catch (TimeoutException) { }
+                catch (Exception error)  {
+                    if (LoggedError.TryAdd(error.Message, true)) Logger?.LogError(error, $"BackupStructureData: Request_Entity_Export[{errorCounter++}] {test.Playfield} -> {test.StructureInfo.id} '{test.StructureInfo.name}'");
+
+                    try { ActivePlayfields = new ConcurrentDictionary<string, string>(Request_Playfield_List().Result.playfields.ToDictionary(P => P)); }
+                    catch (Exception playfieldListError) { Logger?.LogError(playfieldListError, $"BackupStructureData: Request_Playfield_List {test.Playfield} -> {test.StructureInfo.id} '{test.StructureInfo.name}'"); }
+
+                    Thread.Sleep(Program.AppSettings.StructureDataUpdateDelayInSeconds * 1000);
+                }
+            }
+        }
+
+        private bool IsExportDatOutdated(string exportDat)
+        {
+            return !File.Exists(exportDat) || (DateTime.Now - File.GetLastWriteTime(exportDat)).TotalMinutes > Program.AppSettings.StructureDataUpdateInMinutes;
         }
 
         public override void Initialize(ModGameAPI dediAPI)
         {
             GameAPI = dediAPI;
             LogLevel = EmpyrionNetAPIDefinitions.LogLevel.Debug;
+
+            _ = TaskTools.Intervall(Math.Max(1, Program.AppSettings.StructureDataUpdateCheckInSeconds) * 1000,           () => BackupStructureData());
+            _ = TaskTools.Intervall(Math.Max(1, Program.AppSettings.StructureDataUpdateCheckInSeconds) * 1000 * 60 * 60, () => LoggedError.Clear());
+
+            Event_Playfield_Loaded += P => ActivePlayfields.TryAdd   (P.playfield, P.playfield);
+            Event_Playfield_Unloaded += P => ActivePlayfields.TryRemove(P.playfield, out _);
         }
 
         public static void CopyAll(DirectoryInfo aSource, DirectoryInfo aTarget)
@@ -58,6 +150,13 @@ namespace EmpyrionModWebHost.Controllers
         {
             var NewID = await Request_NewEntityId();
 
+            var SourceDir = Path.Combine(BackupDir,
+                            aSelectBackupDir == CurrentSaveGame ? EmpyrionConfiguration.ProgramPath : aSelectBackupDir,
+                            @"Saves\Games",
+                            Path.GetFileName(EmpyrionConfiguration.SaveGamePath), "Shared", aStructure.structureName);
+            var sourceExportDat = Path.Combine(SourceDir, "Export.dat");
+            var TargetDir = Path.Combine(EmpyrionConfiguration.SaveGamePath, "Shared", $"{NewID.id}");
+
             var SpawnInfo = new EntitySpawnInfo()
             {
                 forceEntityId = NewID.id,
@@ -70,13 +169,8 @@ namespace EmpyrionModWebHost.Controllers
                 prefabName = $"{aStructure.Type}_Player",
                 factionGroup = 0,
                 factionId = 0, // erstmal auf "public" aStructure.Faction,
+                exportedEntityDat = File.Exists(sourceExportDat) ? sourceExportDat : null
             };
-
-            var SourceDir = Path.Combine(BackupDir,
-                            aSelectBackupDir == CurrentSaveGame ? EmpyrionConfiguration.ProgramPath : aSelectBackupDir, 
-                            @"Saves\Games",
-                            Path.GetFileName(EmpyrionConfiguration.SaveGamePath), "Shared", aStructure.structureName);
-            var TargetDir = Path.Combine(EmpyrionConfiguration.SaveGamePath, "Shared", $"{aStructure.Type}_Player_{NewID.id}");
 
             Directory.CreateDirectory(Path.GetDirectoryName(TargetDir));
             CopyAll(new DirectoryInfo(SourceDir), new DirectoryInfo(TargetDir));
@@ -85,7 +179,18 @@ namespace EmpyrionModWebHost.Controllers
             catch { }  // Playfield already loaded
 
             await Request_Entity_Spawn(SpawnInfo);
-            await Request_Structure_Touch(NewID); // Sonst wird die Struktur sofort wieder gelöscht !!!
+            for (int i = 0; i < 10; i++)
+            {
+                try
+                {
+                    await Request_Structure_Touch(NewID); // Sonst wird die Struktur sofort wieder gelöscht !!!
+                    break;
+                }
+                catch
+                {
+                    await Task.Delay(5000);
+                }
+            }
         }
 
         public void BackupState(bool aRunning)
@@ -106,20 +211,59 @@ namespace EmpyrionModWebHost.Controllers
             BackupState(false);
         }
 
+        public void BackupPlayfields(string aCurrentBackupDir, string[] playfields)
+        {
+            BackupState(true);
+
+            playfields.AsParallel()
+                .ForAll(P =>
+                {
+                    CopyAll(
+                        new DirectoryInfo(Path.Combine(EmpyrionConfiguration.SaveGamePath, "Playfields", P)),
+                        new DirectoryInfo(Path.Combine(aCurrentBackupDir, "Saves", "Games", Path.GetFileName(EmpyrionConfiguration.SaveGamePath), "Playfields", P))
+                        );
+
+                    CopyAll(
+                        new DirectoryInfo(Path.Combine(EmpyrionConfiguration.SaveGamePath, "Templates", P)),
+                        new DirectoryInfo(Path.Combine(aCurrentBackupDir, "Saves", "Games", Path.GetFileName(EmpyrionConfiguration.SaveGamePath), "Templates", P))
+                        );
+
+                    StructureManager.Value.LastGlobalStructureList.Current.globalStructures.TryGetValue(P, out var structures);
+                    structures
+                        .Where(S => S.factionId > 0 && (S.factionGroup == (byte)Factions.Private || S.factionGroup == (byte)Factions.Faction))
+                        .AsParallel()
+                        .ForAll(S => {
+                            var structureName = $"{S.id}";
+
+                            CopyAll(
+                                new DirectoryInfo(Path.Combine(EmpyrionConfiguration.SaveGamePath, "Shared", structureName)),
+                                new DirectoryInfo(Path.Combine(aCurrentBackupDir, "Saves", "Games", Path.GetFileName(EmpyrionConfiguration.SaveGamePath), "Shared", structureName))
+                                );
+
+                            File.Copy(
+                                Path.Combine(EmpyrionConfiguration.SaveGamePath, "Shared", structureName + ".txt"),
+                                Path.Combine(aCurrentBackupDir, "Saves", "Games", Path.GetFileName(EmpyrionConfiguration.SaveGamePath), "Shared", structureName + ".txt")
+                                );
+                        });
+                });
+
+            BackupState(false);
+        }
+
         public void SavegameBackup(string aCurrentBackupDir)
         {
             BackupState(true);
 
-            CopyAll(new DirectoryInfo(Path.Combine(EmpyrionConfiguration.ProgramPath, "Saves", "Games")),
+            CopyAll(new DirectoryInfo(Path.Combine(EmpyrionConfiguration.SaveGamePath, "..", "..", "Games")),
                 new DirectoryInfo(Path.Combine(aCurrentBackupDir, "Saves", "Games")));
 
-            CopyAll(new DirectoryInfo(Path.Combine(EmpyrionConfiguration.ProgramPath, "Saves", "Cache")),
+            CopyAll(new DirectoryInfo(Path.Combine(EmpyrionConfiguration.SaveGamePath, "..", "..", "Cache")),
                 new DirectoryInfo(Path.Combine(aCurrentBackupDir, "Saves", "Cache")));
 
-            CopyAll(new DirectoryInfo(Path.Combine(EmpyrionConfiguration.ProgramPath, "Saves", "Blueprints")),
+            CopyAll(new DirectoryInfo(Path.Combine(EmpyrionConfiguration.SaveGamePath, "..", "..", "Blueprints")),
                 new DirectoryInfo(Path.Combine(aCurrentBackupDir, "Saves", "Blueprints")));
 
-            Directory.EnumerateFiles(Path.Combine(EmpyrionConfiguration.ProgramPath, "Saves"))
+            Directory.EnumerateFiles(Path.Combine(EmpyrionConfiguration.SaveGamePath, "..", ".."))
                 .AsParallel()
                 .ForEach(F => File.Copy(F, Path.Combine(aCurrentBackupDir, "Saves", Path.GetFileName(F))));
 
@@ -214,6 +358,7 @@ namespace EmpyrionModWebHost.Controllers
             public string backup;
         }
 
+        private static readonly object CreateStructureLock = new object();
 
         public BackupManager BackupManager { get; }
 
@@ -329,8 +474,11 @@ namespace EmpyrionModWebHost.Controllers
 
         private PlayfieldGlobalStructureInfo[] DeletesStructuresFromCurrentSaveGame()
         {
-            var GSL = BackupManager.Request_GlobalStructure_List().Result.globalStructures
-                .Aggregate(new List<int>(), (L, S) => { L.AddRange(S.Value.Select(s => s.id)); return L; });
+            var GS = BackupManager.Request_GlobalStructure_List().Result?.globalStructures;
+
+            var GSL = GS == null 
+                ? new List<int>() 
+                : GS.Aggregate(new List<int>(), (L, S) => { L.AddRange(S.Value.Select(s => s.id)); return L; });
 
             return ReadStructuresFromDirectory(BackupManager.CurrentSaveGame).Where(S => !GSL.Contains(S.Id)).ToArray();
         }
@@ -412,7 +560,7 @@ namespace EmpyrionModWebHost.Controllers
             return Ok();
         }
 
-        private PlayfieldGlobalStructureInfo GenerateGlobalStructureInfo(string aInfoTxtFile)
+        public static PlayfieldGlobalStructureInfo GenerateGlobalStructureInfo(string aInfoTxtFile)
         {
             var Info = new PlayfieldGlobalStructureInfo();
             Info.structureName = Path.GetFileNameWithoutExtension(aInfoTxtFile);
@@ -425,29 +573,85 @@ namespace EmpyrionModWebHost.Controllers
                 if (FirstLine == null || LastLine == null) return Info;
 
                 var FieldNames  = FirstLine.Split(',');
-                var FieldValues = LastLine .Split(',');
+                var FieldValues = LastLine.Split(',').ToList();
+
+                var posField = Array.FindIndex(FieldNames, N => N == "pos");
+
+                if (FieldValues.Count > 22)
+                {
+                    var startPos = 0;
+                    for (int i = 0; i <= posField; i++) startPos = LastLine.IndexOf(',', startPos + 1);
+
+                    var endPos = LastLine.IndexOfAny(new[] { ',', ' ' }, startPos);
+                    if (LastLine[endPos] == ',')
+                    {
+                    LastLine = LastLine.Substring(0, endPos) + '.' + LastLine.Substring(endPos + 1);
+                    endPos = LastLine.IndexOf(' ', endPos) + 1;
+                    }
+                    endPos = LastLine.IndexOfAny(new[] { ',', ' ' }, endPos + 1);
+                    if (LastLine[endPos] == ',')
+                    {
+                    LastLine = LastLine.Substring(0, endPos) + '.' + LastLine.Substring(endPos + 1);
+                    endPos = LastLine.IndexOf(' ', endPos) + 1;
+                    }
+                    endPos = LastLine.IndexOfAny(new[] { ',', ' ' }, endPos + 1);
+                    if (LastLine[endPos] == ',')
+                    {
+                    LastLine = LastLine.Substring(0, endPos) + '.' + LastLine.Substring(endPos + 1);
+                    endPos = LastLine.IndexOf(' ', endPos) + 1;
+                    }
+                }
+
+                var rotField = Array.FindIndex(FieldNames, N => N == "rot");
+                if (FieldValues.Count > 22)
+                {
+                    var startPos = 0;
+                    for (int i = 0; i <= rotField; i++) startPos = LastLine.IndexOf(',', startPos + 1);
+
+                    var endPos = LastLine.IndexOfAny(new[] { ',', ' ' }, startPos);
+                    if (LastLine[endPos] == ',' && Char.IsDigit(LastLine[endPos + 1]))
+                    {
+                    LastLine = LastLine.Substring(0, endPos) + '.' + LastLine.Substring(endPos + 1);
+                    endPos = LastLine.IndexOf(' ', endPos) + 1;
+                    }
+                    endPos = LastLine.IndexOfAny(new[] { ',', ' ' }, endPos + 1);
+                    if (LastLine[endPos] == ',' && Char.IsDigit(LastLine[endPos + 1]))
+                    {
+                    LastLine = LastLine.Substring(0, endPos) + '.' + LastLine.Substring(endPos + 1);
+                    endPos = LastLine.IndexOf(' ', endPos) + 1;
+                    }
+                    endPos = LastLine.IndexOfAny(new[] { ',', ' ' }, endPos + 1);
+                    if (LastLine[endPos] == ',' && Char.IsDigit(LastLine[endPos + 1]))
+                    {
+                    LastLine = LastLine.Substring(0, endPos) + '.' + LastLine.Substring(endPos + 1);
+                    endPos = LastLine.IndexOf(' ', endPos) + 1;
+                    }
+                }
+
+                FieldValues = LastLine.Split(',').ToList();
 
                 string   StringValue    (string N) { var pos = Array.IndexOf(FieldNames, N); return pos == -1 ? null : FieldValues[pos]; }
                 int      IntValue       (string N) { var pos = Array.IndexOf(FieldNames, N); return pos == -1 ? 0 : ToIntOrZero(FieldValues[pos]); }
                 bool     BoolValue      (string N) { var pos = Array.IndexOf(FieldNames, N); return pos != -1 && bool.TryParse(FieldValues[pos], out bool Result) && Result; }
                 PVector3 PVector3Value  (string N) { var pos = Array.IndexOf(FieldNames, N); return pos == -1 ? new PVector3() : GetPVector3(FieldValues[pos]); }
-                DateTime DateTimeValue  (string N) { var pos = Array.IndexOf(FieldNames, N); return pos != -1 && DateTime.TryParse(FieldValues[pos], CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime Result) ? Result : DateTime.MinValue; }
+                DateTime DateTimeValue  (string N) { var pos = Array.IndexOf(FieldNames, N); return pos != -1 && DateTime.TryParseExact(FieldValues[pos], "dd.MM.yyyy HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime Result) ? Result : DateTime.MinValue; }
 
                 Info.Playfield  = StringValue("playfield");
                 Info.Id         = IntValue("id");
                 Info.Name       = StringValue("name")?.Trim('\'');
                 Info.Type       = StringValue("type");
-                Info.Faction    = ToIntOrZero(StringValue("faction")?.Replace("[Fac", "").Replace("]", "").Trim());
+                var faction     = StringValue("faction")?.Trim();
+                Info.Faction    = ToIntOrZero(faction?.Replace("]", "").Substring(faction.IndexOf(' ') + 1).Trim());
 
-                Info.Blocks = IntValue("blocks");
-                Info.Devices = IntValue("devices");
-                Info.Touched_ticks = IntValue("touched_ticks");
-                Info.Touched_id = IntValue("touched_id");
-                Info.Saved_ticks = IntValue("saved_ticks");
+                Info.Blocks         = IntValue("blocks");
+                Info.Devices        = IntValue("devices");
+                Info.Touched_ticks  = IntValue("touched_ticks");
+                Info.Touched_id     = IntValue("touched_id");
+                Info.Saved_ticks    = IntValue("saved_ticks");
 
-                Info.Docked = BoolValue("docked");
-                Info.Powered = BoolValue("powered");
-                Info.Core = BoolValue("core");
+                Info.Docked     = BoolValue("docked");
+                Info.Powered    = BoolValue("powered");
+                Info.Core       = BoolValue("core");
 
                 Info.Pos = PVector3Value("pos");
                 Info.Rot = PVector3Value("rot");
@@ -455,7 +659,7 @@ namespace EmpyrionModWebHost.Controllers
                 Info.Saved_time   = DateTimeValue("saved_time");
                 Info.Touched_time = DateTimeValue("touched_time");
                 Info.Touched_name = StringValue("touched_name")?.Trim('\'');
-                Info.Add_info = StringValue("add_info");
+                Info.Add_info     = $"{StringValue("add_info")} {faction}";
             }
             catch (Exception)
             {
@@ -464,7 +668,7 @@ namespace EmpyrionModWebHost.Controllers
             return Info;
         }
 
-        private PVector3 GetPVector3(string aValue)
+        private static PVector3 GetPVector3(string aValue)
         {
             var d = aValue.Split(' ');
             return new PVector3() { x = ToFloatOrZero(d[0]), y = ToFloatOrZero(d[1]), z = ToFloatOrZero(d[2]) };
@@ -472,12 +676,12 @@ namespace EmpyrionModWebHost.Controllers
 
         private static int ToIntOrZero(string aValue)
         {
-            return (int.TryParse(aValue, out int Result) ? Result : 0);
+            return (int.TryParse(aValue?.TrimStart('0'), out int Result) ? Result : 0);
         }
 
         private static float ToFloatOrZero(string aValue)
         {
-            return (float.TryParse(aValue, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out float Result) ? Result : 0);
+            return (float.TryParse(aValue, NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out float Result) ? Result : 0);
         }
 
         public class CreateStructureData : BackupData
@@ -488,7 +692,7 @@ namespace EmpyrionModWebHost.Controllers
         [HttpPost("CreateStructure")]
         public IActionResult CreateStructure([FromBody]CreateStructureData aData)
         {
-            BackupManager.CreateStructure(aData.backup, aData.structure).Wait();
+            lock (CreateStructureLock) BackupManager.CreateStructure(aData.backup, aData.structure).Wait();
             return Ok();
         }
 

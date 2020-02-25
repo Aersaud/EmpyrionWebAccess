@@ -12,6 +12,8 @@ import { PLAYER } from '../model/player-mock';
 import { RoleService } from '../services/role.service';
 import { UserRole } from '../model/user';
 import { OriginService } from '../services/origin.service';
+import { Router } from '@angular/router';
+import { StructureService } from '../services/structure.service';
 
 @Component({
   selector: 'app-player-list',
@@ -34,6 +36,8 @@ export class PlayerListComponent implements OnInit {
   UserRole = UserRole;
 
   constructor(
+    public router: Router,
+    private mStructureService: StructureService,
     private mFactionService: FactionService,
     private mPlayerService: PlayerService,
     private mPositionService: PositionService,
@@ -56,7 +60,16 @@ export class PlayerListComponent implements OnInit {
 
   ngAfterViewInit() {
     this.players.sort = this.sort;
-    this.players.sortingDataAccessor = (D, H) => typeof(D[H])==="string" ? ("" + D[H]).toLowerCase() : D[H];
+    this.players.sortingDataAccessor = (D, H) => typeof (D[H]) === "string" ? ("" + D[H]).toLowerCase() + D["PlayerName"].toLowerCase() : (typeof (D[H]) === "boolean" ? !D[H] + D["PlayerName"].toLowerCase() : D[H]);
+    this.players.filterPredicate =
+      (data: PlayerModel, filter: string) =>
+        data.PlayerName                   .trim().toLowerCase().indexOf(filter) != -1 ||
+        data.Playfield                    .trim().toLowerCase().indexOf(filter) != -1 ||
+        data.EntityId                     .toString()          .indexOf(filter) != -1 ||
+        data.SteamId                                           .indexOf(filter) != -1 ||
+        this.Origin(data)                 .trim().toLowerCase().indexOf(filter) != -1 ||
+        this.Faction(data) && this.Faction(data).Abbrev.trim().toLowerCase().indexOf(filter) != -1 ||
+        ('' + data.FactionId).indexOf(filter) != -1;
   }
 
   @Input()
@@ -99,44 +112,53 @@ export class PlayerListComponent implements OnInit {
     };
   }
 
-  ChatTo(aPlayer: PlayerModel) {
+  ChatToPlayer(aPlayer: PlayerModel) {
     this.mChatService.ChatToPlayer(aPlayer);
   }
 
+  ChatToFaction(aPlayer: PlayerModel) {
+    this.mChatService.ChatToFaction(this.mFactions.find(F => F.FactionId == aPlayer.FactionId));
+  }
+
   Faction(aPlayer: PlayerModel) {
-    return aPlayer ? this.mFactions.find(F => F.FactionId == aPlayer.FactionId) : "";
+    return aPlayer ? this.mFactions.find(F => F.FactionId == aPlayer.FactionId) : new FactionModel();
   }
 
   Origin(aPlayer: PlayerModel) {
-    return aPlayer ? this.mOrigins[aPlayer.Origin] : "";
+    return aPlayer && aPlayer.Origin && this.mOrigins && this.mOrigins[aPlayer.Origin] ? this.mOrigins[aPlayer.Origin] : "";
   }
 
   PlayerColor(aPlayer: PlayerModel) {
-    let FoundElevated = this.mPlayerService.ElevatedUser.find(U => U.steamId == aPlayer.SteamId);
+    let FoundElevated = this.mPlayerService.ElevatedUser ? this.mPlayerService.ElevatedUser.find(U => U.steamId == aPlayer.SteamId) : null;
     if (FoundElevated) switch (FoundElevated.permission) {
       case 3: return "green"; //GameMaster
       case 6: return "brown"; //Moderator
       case 9: return "blue"; //Admin
     }
 
-    let FoundBanned = this.mPlayerService.BannedUser.find(U => U.steamId == aPlayer.SteamId);
+    let FoundBanned = this.mPlayerService.BannedUser ? this.mPlayerService.BannedUser.find(U => U.steamId == aPlayer.SteamId) : null;
     if (FoundBanned) return "red";
 
     return "black";
   }
 
   PlayerHint(aPlayer: PlayerModel) {
-    let FoundElevated = this.mPlayerService.ElevatedUser.find(U => U.steamId == aPlayer.SteamId);
+    let FoundElevated = this.mPlayerService.ElevatedUser ? this.mPlayerService.ElevatedUser.find(U => U.steamId == aPlayer.SteamId) : null;
     if (FoundElevated) switch (FoundElevated.permission) {
       case 3: return "GameMaster";
       case 6: return "Moderator";
       case 9: return "Admin"; 
     }
 
-    let FoundBanned = this.mPlayerService.BannedUser.find(U => U.steamId == aPlayer.SteamId);
+    let FoundBanned = this.mPlayerService.BannedUser ? this.mPlayerService.BannedUser.find(U => U.steamId == aPlayer.SteamId) : null;
     if (FoundBanned) return "Banned until " + FoundBanned.until.toLocaleString();
 
     return "";
   }
 
+  GotoEntities(aPlayer: PlayerModel) {
+    let foundFaction = this.mFactions.find(F => F.FactionId == aPlayer.FactionId);
+    this.mStructureService.FilterPreset = foundFaction ? foundFaction.Abbrev : aPlayer.PlayerName;
+    this.router.navigate(['entities/structureslist'])
+  }
 }

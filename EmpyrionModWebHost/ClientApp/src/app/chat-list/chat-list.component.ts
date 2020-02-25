@@ -62,8 +62,12 @@ export class ChatListComponent implements OnInit {
     if (this.displayFilter) setTimeout(() => FilterInput.focus(), 0);
   }
 
-  ChatTo(aMsg: ChatModel) {
+  ChatToPlayer(aMsg: ChatModel) {
     this.mChatService.ChatToPlayer(this.mPlayerService.GetPlayer(P => P.SteamId == aMsg.PlayerSteamId));
+  }
+
+  ChatToFaction(aMsg: ChatModel) {
+    this.mChatService.ChatToFaction(this.mFactions.find(F => F.Abbrev == aMsg.FactionName));
   }
 
   Faction(aMsg: ChatModel) {
@@ -89,6 +93,14 @@ export class ChatListComponent implements OnInit {
     this.mChatService.filterServerMsg = aFilter;
   }
 
+  get filterCMDsMsg(): boolean {
+    return this.mChatService.filterCMDsMsg;
+  }
+
+  set filterCMDsMsg(aFilter: boolean) {
+    this.mChatService.filterCMDsMsg = aFilter;
+  }
+
   ExecChatTranslate(chat: any) {
     if (chat.MessageTranslate) return;
 
@@ -106,6 +118,6 @@ export class ChatListComponent implements OnInit {
         error => this.error = error // error path
       );
     // Stop listening for location after 10 seconds
-    setTimeout(() => { locationsSubscription.unsubscribe(); }, 10000);
+    setTimeout(() => { locationsSubscription.unsubscribe(); }, 120000);
   }
 }

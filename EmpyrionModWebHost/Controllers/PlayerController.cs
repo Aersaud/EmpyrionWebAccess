@@ -1,24 +1,25 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using Eleon.Modding;
 using EmpyrionModWebHost.Extensions;
-using Eleon.Modding;
 using EmpyrionModWebHost.Models;
+using EmpyrionModWebHost.Services;
 using EmpyrionNetAPIAccess;
+using EmpyrionNetAPITools;
+using EmpyrionNetAPIDefinitions;
 using Microsoft.AspNet.OData;
 using Microsoft.AspNet.OData.Builder;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.OData.Edm;
 using Newtonsoft.Json;
-using Microsoft.AspNetCore.Authorization;
-using System.IO;
-using Microsoft.EntityFrameworkCore;
-using EmpyrionModWebHost.Services;
-using System.Security.Claims;
+using System;
 using System.Collections.Concurrent;
-using EmpyrionNetAPITools;
-using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Claims;
+using Microsoft.Extensions.Logging;
 
 namespace EmpyrionModWebHost.Controllers
 {
@@ -30,6 +31,7 @@ namespace EmpyrionModWebHost.Controllers
 
     public class PlayerManager : EmpyrionModBase, IEWAPlugin, IDatabaseConnect
     {
+        public ILogger<PlayerManager> Logger { get; set; }
         public IRoleHubContext<PlayerHub> PlayerHub { get; internal set; }
         public IProvider<IUserService> UserService { get; }
         public Lazy<SysteminfoManager> SysteminfoManager { get; }
@@ -38,15 +40,19 @@ namespace EmpyrionModWebHost.Controllers
         public ModGameAPI GameAPI { get; private set; }
         public ConcurrentDictionary<string, Player> UpdatePlayersQueue { get; set; } = new ConcurrentDictionary<string, Player>();
 
-        public PlayerManager(IRoleHubContext<PlayerHub> aPlayerHub, IProvider<IUserService> aUserService)
+        public PlayerManager(
+            ILogger<PlayerManager> aLogger,
+            IRoleHubContext<PlayerHub> aPlayerHub, 
+            IProvider<IUserService> aUserService)
         {
-            PlayerHub = aPlayerHub;
+            Logger      = aLogger;
+            PlayerHub   = aPlayerHub;
             UserService = aUserService;
             SysteminfoManager   = new Lazy<SysteminfoManager>(() => Program.GetManager<SysteminfoManager>());
             ChatManager         = new Lazy<ChatManager>(() => Program.GetManager<ChatManager>());
             UserManager         = new Lazy<UserManager>(() => Program.GetManager<UserManager>());
 
-            TaskTools.Intervall(1000, SendPlayerUpdates);
+            TaskTools.Intervall(10000, SendPlayerUpdates);
         }
 
         private void SendPlayerUpdates()
@@ -54,10 +60,12 @@ namespace EmpyrionModWebHost.Controllers
             var keys = UpdatePlayersQueue.Keys.ToArray();
             if (keys.Length == 0) return;
 
-            var updateKey = keys[new Random().Next(0, keys.Length - 1)];
-            UpdatePlayersQueue.TryRemove(updateKey, out var ChangedPlayer);
+            //var updateKey = keys[new Random().Next(0, keys.Length - 1)];
+            //UpdatePlayersQueue.TryRemove(updateKey, out var ChangedPlayer);
 
-            PlayerHub?.RoleSendAsync(null, "UpdatePlayer", JsonConvert.SerializeObject(ChangedPlayer));
+            PlayerHub?.RoleSendAsync(null, "UpdatePlayers", JsonConvert.SerializeObject(UpdatePlayersQueue.Values.ToArray()));
+
+            UpdatePlayersQueue.Clear();
         }
 
         public void CreateAndUpdateDatabase()
@@ -66,6 +74,7 @@ namespace EmpyrionModWebHost.Controllers
             {
                 DB.Database.Migrate();
                 DB.Database.EnsureCreated();
+                DB.Database.ExecuteSqlCommand("PRAGMA journal_mode=WAL;");
             }
         }
 
@@ -95,67 +104,76 @@ namespace EmpyrionModWebHost.Controllers
 
         private async void PlayerManager_Event_Player_Info(PlayerInfo aPlayerInfo)
         {
-            using (var DB = new PlayerContext())
+            try
             {
-                var Player = DB.Find<Player>(aPlayerInfo.steamId) ?? new Player();
-                var IsNewPlayer = string.IsNullOrEmpty(Player.Id);
-
-                Player.Id = aPlayerInfo.steamId;
-                Player.EntityId = aPlayerInfo.entityId;
-                Player.SteamId = aPlayerInfo.steamId;
-                Player.ClientId = aPlayerInfo.clientId;
-                Player.Radiation = aPlayerInfo.radiation;
-                Player.RadiationMax = aPlayerInfo.radiationMax;
-                Player.BodyTemp = aPlayerInfo.bodyTemp;
-                Player.BodyTempMax = aPlayerInfo.bodyTempMax;
-                Player.Kills = aPlayerInfo.kills;
-                Player.Died = aPlayerInfo.died;
-                Player.Credits = aPlayerInfo.credits;
-                Player.FoodMax = aPlayerInfo.foodMax;
-                Player.Exp = aPlayerInfo.exp;
-                Player.Upgrade = aPlayerInfo.upgrade;
-                Player.Ping = aPlayerInfo.ping;
-                Player.Permission = aPlayerInfo.permission;
-                Player.Food = aPlayerInfo.food;
-                Player.Stamina = aPlayerInfo.stamina;
-                Player.SteamOwnerId = aPlayerInfo.steamOwnerId;
-                Player.PlayerName = aPlayerInfo.playerName;
-                Player.Playfield = aPlayerInfo.playfield;
-                Player.StartPlayfield = aPlayerInfo.startPlayfield;
-                Player.StaminaMax = aPlayerInfo.staminaMax;
-                Player.FactionGroup = aPlayerInfo.factionGroup;
-                Player.FactionId = aPlayerInfo.factionId;
-                Player.FactionRole = aPlayerInfo.factionRole;
-                Player.Health = aPlayerInfo.health;
-                Player.HealthMax = aPlayerInfo.healthMax;
-                Player.Oxygen = aPlayerInfo.oxygen;
-                Player.OxygenMax = aPlayerInfo.oxygenMax;
-                Player.Origin = aPlayerInfo.origin;
-                Player.PosX = aPlayerInfo.pos.x;
-                Player.PosY = aPlayerInfo.pos.y;
-                Player.PosZ = aPlayerInfo.pos.z;
-                Player.RotX = aPlayerInfo.rot.x;
-                Player.RotY = aPlayerInfo.rot.y;
-                Player.RotZ = aPlayerInfo.rot.z;
-
-                if (IsNewPlayer)
+                using (var DB = new PlayerContext())
                 {
-                    Player.Note = string.Empty;
-                    Player.OnlineTime = new TimeSpan();
-                    Player.LastOnline = DateTime.Now;
-                    Player.OnlineHours = 0;
-                    Player.Online = true;
-                    DB.Players.Add(Player);
-                }
-                var count = await DB.SaveChangesAsync();
+                    var Player = DB.Find<Player>(aPlayerInfo.steamId) ?? new Player();
+                    var IsNewPlayer = string.IsNullOrEmpty(Player.Id);
 
-                if (count > 0)
-                {
-                    UpdatePlayersQueue.AddOrUpdate(Player.Id, Player, (S, O) => Player);
-                    //PlayerHub?.RoleSendAsync(Player, "UpdatePlayer", JsonConvert.SerializeObject(Player));
-                }
+                    Player.Id = aPlayerInfo.steamId;
+                    Player.EntityId = aPlayerInfo.entityId;
+                    Player.SteamId = aPlayerInfo.steamId;
+                    Player.ClientId = aPlayerInfo.clientId;
+                    Player.Radiation = aPlayerInfo.radiation;
+                    Player.RadiationMax = aPlayerInfo.radiationMax;
+                    Player.BodyTemp = aPlayerInfo.bodyTemp;
+                    Player.BodyTempMax = aPlayerInfo.bodyTempMax;
+                    Player.Kills = aPlayerInfo.kills;
+                    Player.Died = aPlayerInfo.died;
+                    Player.Credits = aPlayerInfo.credits;
+                    Player.FoodMax = aPlayerInfo.foodMax;
+                    Player.Exp = aPlayerInfo.exp;
+                    Player.Upgrade = aPlayerInfo.upgrade;
+                    Player.Ping = aPlayerInfo.ping;
+                    Player.Permission = aPlayerInfo.permission;
+                    Player.Food = aPlayerInfo.food;
+                    Player.Stamina = aPlayerInfo.stamina;
+                    Player.SteamOwnerId = aPlayerInfo.steamOwnerId;
+                    Player.PlayerName = aPlayerInfo.playerName;
+                    Player.Playfield = aPlayerInfo.playfield;
+                    Player.BpInFactory = aPlayerInfo.bpInFactory;
+                    Player.BpRemainingTime = aPlayerInfo.bpRemainingTime;
+                    Player.StartPlayfield = aPlayerInfo.startPlayfield;
+                    Player.StaminaMax = aPlayerInfo.staminaMax;
+                    Player.FactionGroup = aPlayerInfo.factionGroup;
+                    Player.FactionId = aPlayerInfo.factionId;
+                    Player.FactionRole = aPlayerInfo.factionRole;
+                    Player.Health = aPlayerInfo.health;
+                    Player.HealthMax = aPlayerInfo.healthMax;
+                    Player.Oxygen = aPlayerInfo.oxygen;
+                    Player.OxygenMax = aPlayerInfo.oxygenMax;
+                    Player.Origin = aPlayerInfo.origin;
+                    Player.PosX = aPlayerInfo.pos.x;
+                    Player.PosY = aPlayerInfo.pos.y;
+                    Player.PosZ = aPlayerInfo.pos.z;
+                    Player.RotX = aPlayerInfo.rot.x;
+                    Player.RotY = aPlayerInfo.rot.y;
+                    Player.RotZ = aPlayerInfo.rot.z;
 
-                if (IsNewPlayer) SendWelcomeMessage(Player);
+                    if (IsNewPlayer)
+                    {
+                        Player.Note = string.Empty;
+                        Player.OnlineTime = new TimeSpan();
+                        Player.LastOnline = DateTime.Now;
+                        Player.OnlineHours = 0;
+                        Player.Online = true;
+                        DB.Players.Add(Player);
+                    }
+                    var count = await DB.SaveChangesAsync();
+
+                    if (count > 0)
+                    {
+                        UpdatePlayersQueue.AddOrUpdate(Player.Id, Player, (S, O) => Player);
+                        //PlayerHub?.RoleSendAsync(Player, "UpdatePlayer", JsonConvert.SerializeObject(Player));
+                    }
+
+                    if (IsNewPlayer) SendWelcomeMessage(Player);
+                }
+            }
+            catch (Exception error)
+            {
+                Logger?.LogError(error, "PlayerManager_Event_Player_Info");
             }
         }
 
@@ -168,27 +186,36 @@ namespace EmpyrionModWebHost.Controllers
 
         public Player GetPlayer(int aPlayerId)
         {
-            using (var DB = new PlayerContext())
+            return TaskTools.Retry(() =>
             {
-                return DB.Players.FirstOrDefault(P => P.EntityId == aPlayerId);
-            }
+                using (var DB = new PlayerContext())
+                {
+                    return DB.Players.FirstOrDefault(P => P.EntityId == aPlayerId);
+                }
+            });
         }
 
         public Player GetPlayer(string aSteamId)
         {
-            using (var DB = new PlayerContext())
+            return TaskTools.Retry(() =>
             {
-                return DB.Players.FirstOrDefault(P => P.SteamId == aSteamId);
-            }
+                using (var DB = new PlayerContext())
+                {
+                    return DB.Players.FirstOrDefault(P => P.SteamId == aSteamId);
+                }
+            });
         }
 
         public int OnlinePlayersCount
         {
             get {
-                using (var DB = new PlayerContext())
+                return TaskTools.Retry(() =>
                 {
-                    return DB.Players.Count(P => P.Online);
-                }
+                    using (var DB = new PlayerContext())
+                    {
+                        return DB.Players.Count(P => P.Online);
+                    }
+                });
             }
         }
 
@@ -204,10 +231,13 @@ namespace EmpyrionModWebHost.Controllers
 
         public Player CurrentPlayer {
             get {
-                using (var DB = new PlayerContext())
+                return TaskTools.Retry(() =>
                 {
-                    return DB.Players.Where(P => P.SteamId == UserService.Get().CurrentUser.InGameSteamId).FirstOrDefault();
-                }
+                    using (var DB = new PlayerContext())
+                    {
+                        return DB.Players.Where(P => P.SteamId == UserService.Get().CurrentUser.InGameSteamId).FirstOrDefault();
+                    }
+                });
             }
         }
 

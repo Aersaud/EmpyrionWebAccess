@@ -14,7 +14,7 @@ namespace EmpyrionModWebHost.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "2.1.4-rtm-31024");
+                .HasAnnotation("ProductVersion", "2.2.4-servicing-10062");
 
             modelBuilder.Entity("EmpyrionModWebHost.Models.Player", b =>
                 {
@@ -24,6 +24,10 @@ namespace EmpyrionModWebHost.Migrations
                     b.Property<float>("BodyTemp");
 
                     b.Property<float>("BodyTempMax");
+
+                    b.Property<string>("BpInFactory");
+
+                    b.Property<float>("BpRemainingTime");
 
                     b.Property<int>("ClientId");
 
