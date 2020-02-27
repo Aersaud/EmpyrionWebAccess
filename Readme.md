@@ -1,9 +1,5 @@
-﻿# Empyrion Web Access
- 
-
-# English Version
-
 # Empyrion Web Access
+## English Version
 
 ## What's this?
 Empyrion Web Access is a MOD that allows access to the game as an admin via a web browser.
