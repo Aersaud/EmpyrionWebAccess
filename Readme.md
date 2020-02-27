@@ -19,7 +19,6 @@ ASTIC/TC
 ![](EmpyrionModWebHost/Screenshots/start1.png)
 * Shut down the Server and rename the "xstart.txt" to "start.txt". When the Server is restarted,
 the Ewa-Loader should be ready for use.
-* ![](EmpyrionModWebHost/Screenshots/start2.png)
 
 * !!! IMPORTANT !!! EmpyrionWebAccess does not start automatically. The "start.txt" file must always be located in the directory \[Savegame\]\\MODs\\EWA.
 * If you want to switch off the EWA again it is enough to change the "start.txt" into "xstart.txt" again.
@@ -35,7 +34,7 @@ other MUST be commented out by //.
 
 Note: The web server runs exclusively via HTTPS and uses the HTTP only for forwarding to HTTPS.
 
-## First login
+## First Login
 When starting the EGS server, Empyrion Web Access should display a login mask under the selected ServerURL.
 
 As the first user, the abbreviation and password are automatically stored and accepted in the user database. All users can be subsequently created, changed or deleted via the interface.
@@ -46,7 +45,7 @@ Note: Since the EWA's HTTPS certificate is self-signed, the browser displays a w
 Top right information about the server (CPU, RAM, HDD), the game (online players, number of Playfield servers, the reserve server and their memory consumption) and the version is displayed.
 Also under the three right-most points is the menu for further windows and the logout.
 
-### chat area
+### Chat Area
 Here are all the chat messages of the game. The admin can also place chat messages in the game from here by entering the text in the "Message" input field and confirming with Enter/Return. If the check mark "Chat as NNNN" is set, an NNNN: is automatically set for the players in the game before the chat message.
 
 To chat directly with a player, you can select it with the chat icon. Its name is then displayed below the input field. To be able to chat again with all players then simply the hook at "Chat to all" be set again.
@@ -64,12 +63,12 @@ The player is shown here with his online status, name, faction, origin ...
 * The chat symbol is used to make direct contact with the player and to save the flag symbol, its current position (see Warp).
 * The warp icon (gamepad icon) is used to bring up the Warp window for the player to change the position of the player in the game.
 
-### Inventory display
+### Inventory Display
 Here the inventory of the selected player is displayed. From here you can
 * Add items
 * Restore an old condition of the backpack
 
-### Player details
+### Player Details
 Here, the data of the selected player is displayed and can be changed.
 Note: Still open: ban / unban and wipe
 
@@ -162,7 +161,7 @@ Make the following entry in 'appconfig.json' in \[savegame\]\\MODs\\EWA
 
 Note: LetEncrpyt currently only works with the stanadard ports 80 or 443.
 
-# Advanced configuration
+# Advanced Configuration
 ## Create your own self-signed certificate for the HTTPS connection
 The EWA already contains a self-signed certificate. But you can also make your own with PowerShell:
 
@@ -172,7 +171,7 @@ The EWA already contains a self-signed certificate. But you can also make your o
 Export-PfxCertificate -cert cert: \localMachine \my \CE0976529B02DE058C9CB2C0E64AD79DAFB18CF4 -FilePath EmpyrionWebAccess.pfx -Password $ pwd
 1. Now the EmpyrionWebAccess.pfx file must be placed on the server and the file path and the password in the appsettings.json file in the \[Savegame\]\\MODs\\EWA directory must be entered
 
-## Release of ports
+## Port Forwarding
 Possibly. the ports and addresses must still be released for the user under whose EGS account is running. To do this, you need to issue the following commands in an Admin PowerShel Console.
 
 1. For HTTP
