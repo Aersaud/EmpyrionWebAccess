@@ -12,7 +12,7 @@ Donation to the original creator: https://paypal.me/ASTICTC
 Have fun playing and server operation wishes
 ASTIC/TC
 
-## installation
+## Installation
 * Extract the Content of the ZIP file into the directory "\\Empyrion-Dedicated Server\\Content\\Mods"
 ![](EmpyrionModWebHost/Screenshots/Pfad01.png)
 * When start the Empyrion Dedicated Server the file "xstart.txt"will be created in the savegame directory \[Savegame\]\\Mods\\EWA. Where "Savegame" is your game savegame name.
